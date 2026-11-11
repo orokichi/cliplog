@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>ClipLog — スクリーンショットを、スタイリッシュな記録に。</title>
+<meta name="description" content="ClipLogはスクリーンショットや画像をD&D・貼り付けで取り込み、フレームと装飾をカスタマイズして記録（ログ）として保存・管理できるWebアプリです。" />
+<meta name="theme-color" content="#0b0d14" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237cc4ff'/%3E%3Cstop offset='1' stop-color='%23b18cff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='6' y='6' width='52' height='52' rx='16' fill='url(%23g)'/%3E%3Crect x='18' y='20' width='28' height='22' rx='5' fill='none' stroke='white' stroke-width='4'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="ambient" aria-hidden="true">
+  <span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span><span class="blob b4"></span>
+</div>
+
+<header class="topbar glass">
+  <a class="brand" href="#" data-view="editor">
+    <span class="logo"><svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="3"/><path d="M8 3.5h8"/></svg></span>
+    <span class="brand-name">ClipLog</span>
+  </a>
+  <nav class="seg glass-inset" role="tablist">
+    <span class="seg-pill" aria-hidden="true"></span>
+    <button class="seg-btn active" data-view="editor" role="tab">エディタ</button>
+    <button class="seg-btn" data-view="library" role="tab">ライブラリ <span class="badge" id="libCount">0</span></button>
+  </nav>
+  <div class="top-actions">
+    <label class="btn ghost magnet" title="画像を追加">
+      <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,.heic,.heif" multiple hidden />
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>画像を追加</span>
+    </label>
+  </div>
+</header>
+
+<main>
+  <!-- EDITOR VIEW -->
+  <section class="view view-editor active" id="view-editor">
+    <aside class="panel glass tray">
+      <div class="panel-head">
+        <h2>取り込み</h2>
+        <span class="mono dim" id="trayCount">0 枚</span>
+      </div>
+      <div class="tray-list" id="trayList"></div>
+      <div class="tray-empty" id="trayEmpty">
+        <p>ドロップ、貼り付け<br/><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>V</kbd><br/>または「画像を追加」</p>
+      </div>
+      <div class="tray-foot">
+        <button class="btn ghost small" id="clearTray">クリア</button>
+        <button class="btn small" id="saveAll">すべて保存</button>
+      </div>
+    </aside>
+
+    <div class="stage-wrap">
+      <div class="stage glass" id="stage">
+        <div class="drop-hint" id="dropHint">
+          <div class="drop-card glass">
+            <div class="drop-icon"><svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></div>
+            <h1>スクリーンショットをここへ</h1>
+            <p>ドラッグ＆ドロップ ・ <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>V</kbd> で貼り付け ・ 複数枚OK</p>
+            <label class="btn primary magnet">
+              <input type="file" class="file-proxy" accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,.heic,.heif" multiple hidden />
+              ファイルを選択
+            </label>
+            <p class="formats mono">PNG · JPEG · WebP · GIF · HEIC</p>
+          </div>
+        </div>
+        <canvas id="canvas" class="hidden"></canvas>
+        <div class="drag-overlay" id="dragOverlay"><div class="drag-ring"><span>ドロップして取り込み</span></div></div>
+      </div>
+      <div class="stage-bar glass">
+        <input class="title-input" id="logTitle" placeholder="ログのタイトル" maxlength="80" />
+        <input class="tag-input" id="logTags" placeholder="#タグ（スペース区切り）" maxlength="120" />
+        <div class="bar-actions">
+          <button class="btn ghost small" id="copyBtn" title="クリップボードにコピー"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>コピー</button>
+          <button class="btn ghost small" id="downloadBtn" title="PNGで書き出し"><svg viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>PNG</button>
+          <button class="btn primary small magnet" id="saveBtn"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>ログに保存</button>
+        </div>
+      </div>
+    </div>
+
+    <aside class="panel glass inspector" id="inspector">
+      <div class="panel-head"><h2>スタイル</h2><button class="btn ghost tiny" id="resetStyle">リセット</button></div>
+
+      <div class="group">
+        <label class="g-label">フレーム</label>
+        <div class="chips" id="frameChips">
+          <button data-frame="none">なし</button>
+          <button data-frame="mac" class="on">macOS</button>
+          <button data-frame="browser">ブラウザ</button>
+          <button data-frame="phone">スマホ</button>
+          <button data-frame="polaroid">ポラロイド</button>
+          <button data-frame="glass">ガラス</button>
+        </div>
+      </div>
+
+      <div class="group">
+        <label class="g-label">背景</label>
+        <div class="swatches" id="bgSwatches"></div>
+        <div class="row">
+          <label class="mini">カスタム<input type="color" id="bgCustom" value="#7cc4ff" /></label>
+          <label class="mini">透明<input type="checkbox" id="bgTransparent" class="switch" /></label>
+        </div>
+      </div>
+
+      <div class="group">
+        <label class="g-label">比率</label>
+        <div class="chips" id="ratioChips">
+          <button data-ratio="auto" class="on">自動</button>
+          <button data-ratio="1:1">1:1</button>
+          <button data-ratio="4:5">4:5</button>
+          <button data-ratio="16:9">16:9</button>
+          <button data-ratio="9:16">9:16</button>
+        </div>
+      </div>
+
+      <div class="group sliders">
+        <label class="slider"><span>余白 <em id="v-padding"></em></span><input type="range" id="padding" min="0" max="200" value="72" /></label>
+        <label class="slider"><span>角丸 <em id="v-radius"></em></span><input type="range" id="radius" min="0" max="48" value="14" /></label>
+        <label class="slider"><span>影 <em id="v-shadow"></em></span><input type="range" id="shadow" min="0" max="100" value="45" /></label>
+        <label class="slider"><span>傾き <em id="v-tilt"></em></span><input type="range" id="tilt" min="-12" max="12" value="0" /></label>
+        <label class="slider"><span>拡大 <em id="v-scale"></em></span><input type="range" id="scale" min="50" max="100" value="100" /></label>
+      </div>
+
+      <div class="group">
+        <label class="g-label">装飾</label>
+        <div class="row wrap">
+          <label class="mini">キャプション<input type="checkbox" id="showCaption" class="switch" checked /></label>
+          <label class="mini">日付スタンプ<input type="checkbox" id="showDate" class="switch" checked /></label>
+          <label class="mini">ノイズ<input type="checkbox" id="showGrain" class="switch" /></label>
+          <label class="mini">ダーク枠<input type="checkbox" id="darkFrame" class="switch" /></label>
+        </div>
+        <input class="field" id="windowTitle" placeholder="ウィンドウ／URL表示テキスト" maxlength="60" />
+      </div>
+
+      <div class="group">
+        <label class="g-label">書き出し倍率</label>
+        <div class="chips" id="exportChips">
+          <button data-scale="1">1x</button>
+          <button data-scale="2" class="on">2x</button>
+          <button data-scale="3">3x</button>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <!-- LIBRARY VIEW -->
+  <section class="view view-library" id="view-library">
+    <div class="lib-head glass">
+      <div>
+        <h1 class="lib-title">ライブラリ</h1>
+        <p class="dim" id="libSummary">保存したログはこのブラウザに保存されます。</p>
+      </div>
+      <div class="lib-tools">
+        <div class="search glass-inset">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
+          <input id="search" placeholder="タイトル・タグで検索" />
+          <kbd>/</kbd>
+        </div>
+        <select id="sort" class="select glass-inset">
+          <option value="new">新しい順</option>
+          <option value="old">古い順</option>
+          <option value="title">タイトル順</option>
+        </select>
+      </div>
+    </div>
+    <div class="tag-bar" id="tagBar"></div>
+    <div class="grid" id="libGrid"></div>
+    <div class="lib-empty glass" id="libEmpty">
+      <h2>まだログがありません</h2>
+      <p class="dim">エディタで画像を取り込んで「ログに保存」すると、ここに並びます。</p>
+      <button class="btn primary magnet" data-view="editor">エディタを開く</button>
+    </div>
+  </section>
+</main>
+
+<!-- Detail modal -->
+<div class="modal" id="modal" aria-hidden="true">
+  <div class="modal-card glass">
+    <button class="btn ghost tiny close" id="modalClose" aria-label="閉じる">✕</button>
+    <img id="modalImg" alt="" />
+    <div class="modal-meta">
+      <input class="title-input" id="modalTitle" />
+      <input class="tag-input" id="modalTags" />
+      <p class="mono dim" id="modalDate"></p>
+      <div class="modal-actions">
+        <button class="btn ghost small" id="modalDelete">削除</button>
+        <button class="btn ghost small" id="modalDownload">PNG</button>
+        <button class="btn ghost small" id="modalCopy">コピー</button>
+        <button class="btn primary small" id="modalEdit">再編集</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-host" id="toasts"></div>
+<script src="app.js" type="module"></script>
+</body>
+</html>
