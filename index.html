@@ -5,8 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>ClipLog — スクリーンショットを、スタイリッシュな記録に。</title>
 <meta name="description" content="ClipLogはスクリーンショットや画像をD&D・貼り付けで取り込み、フレームと装飾をカスタマイズして記録（ログ）として保存・管理できるWebアプリです。" />
-<meta name="theme-color" content="#0b0d14" />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237cc4ff'/%3E%3Cstop offset='1' stop-color='%23b18cff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='6' y='6' width='52' height='52' rx='16' fill='url(%23g)'/%3E%3Crect x='18' y='20' width='28' height='22' rx='5' fill='none' stroke='white' stroke-width='4'/%3E%3C/svg%3E" />
+<meta name="theme-color" content="#000000" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="ClipLog" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -19,7 +26,7 @@
 
 <header class="topbar glass">
   <a class="brand" href="#" data-view="editor">
-    <span class="logo"><svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="3"/><path d="M8 3.5h8"/></svg></span>
+    <img class="logo" src="icons/icon-192.png" alt="" width="34" height="34" />
     <span class="brand-name">ClipLog</span>
   </a>
   <nav class="seg glass-inset" role="tablist">
@@ -28,6 +35,8 @@
     <button class="seg-btn" data-view="library" role="tab">ライブラリ <span class="badge" id="libCount">0</span></button>
   </nav>
   <div class="top-actions">
+    <button class="btn ghost icon-only" id="newsBtn" title="アップデート情報"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="dot" id="newsDot" hidden></span></button>
+    <button class="btn ghost" id="installBtn" hidden title="アプリとしてインストール"><svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="3"/><path d="M12 7v7M9 11l3 3 3-3"/></svg><span>インストール</span></button>
     <label class="btn ghost magnet" title="画像を追加">
       <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,.heic,.heif" multiple hidden />
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>画像を追加</span>
@@ -166,12 +175,54 @@
         </select>
       </div>
     </div>
+    <nav class="subtabs" id="libTabs">
+      <button class="on" data-tab="logs">ログ</button>
+      <button data-tab="folder">フォルダ <span class="badge" id="folderCount" hidden>0</span></button>
+    </nav>
+    <div class="lib-pane" id="pane-logs">
     <div class="tag-bar" id="tagBar"></div>
     <div class="grid" id="libGrid"></div>
     <div class="lib-empty glass" id="libEmpty">
       <h2>まだログがありません</h2>
       <p class="dim">エディタで画像を取り込んで「ログに保存」すると、ここに並びます。</p>
       <button class="btn primary magnet" data-view="editor">エディタを開く</button>
+    </div>
+    </div>
+
+    <div class="lib-pane hidden" id="pane-folder">
+      <div class="folder-card glass">
+        <div class="folder-status">
+          <div class="folder-icon" id="folderIcon"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+          <div class="folder-text">
+            <h2 id="folderName">フォルダ未接続</h2>
+            <p class="dim" id="folderState">パソコンのフォルダを選ぶと、保存したログを画像ファイルとして自動で整理します。</p>
+          </div>
+          <div class="folder-actions" id="folderActions">
+            <button class="btn primary magnet" id="folderPick">フォルダを選択</button>
+            <button class="btn" id="folderReconnect" hidden>アクセスを許可</button>
+          </div>
+        </div>
+        <div class="folder-opts" id="folderOpts" hidden>
+          <label class="mini">保存時に自動で書き出す<input type="checkbox" id="folderAuto" class="switch" /></label>
+          <label class="mini">元画像も保存<input type="checkbox" id="folderOriginals" class="switch" /></label>
+          <div class="opt-group"><span class="dim">整理方法</span>
+            <div class="chips" id="folderOrganize">
+              <button data-org="none">そのまま</button>
+              <button data-org="month">月別</button>
+              <button data-org="tag">タグ別</button>
+            </div>
+          </div>
+          <div class="folder-btns">
+            <button class="btn ghost small" id="folderRescan">再読み込み</button>
+            <button class="btn ghost small" id="folderExport">全ログを書き出し</button>
+            <button class="btn ghost small" id="folderImportAll">全部エディタへ</button>
+            <button class="btn ghost small" id="folderChange">フォルダを変更</button>
+            <button class="btn ghost small danger" id="folderDisconnect">連携を解除</button>
+          </div>
+        </div>
+        <p class="folder-unsupported" id="folderUnsupported" hidden>このブラウザはフォルダ連携に対応していません。パソコン版のChrome・Edge（またはインストールしたClipLog）で使えます。</p>
+      </div>
+      <div class="grid folder-grid" id="folderGrid"></div>
     </div>
   </section>
 </main>
@@ -193,6 +244,38 @@
       </div>
     </div>
   </div>
+</div>
+
+<!-- What's new -->
+<div class="modal" id="news" aria-hidden="true">
+  <div class="news-card glass">
+    <div class="news-hero">
+      <img src="icons/icon-512.png" alt="" width="72" height="72" />
+      <div>
+        <p class="mono dim" id="newsVersion"></p>
+        <h2>ClipLog がアップデートされました</h2>
+      </div>
+    </div>
+    <ul class="news-list">
+      <li><b>新しいアプリアイコン</b><span>黒地に白のシンプルなアイコンになりました。</span></li>
+      <li><b>アプリとしてインストール</b><span>右上の「インストール」から、ホーム画面やDockに追加できます。オフラインでも起動します。</span></li>
+      <li><b>フォルダ連携</b><span>ライブラリ →「フォルダ」でパソコンのフォルダを選ぶと、保存したログを月別・タグ別に自動で書き出し、フォルダ内の画像もすぐ取り込めます。</span></li>
+      <li><b>画像をClipLogで開く</b><span>インストール後は、画像ファイルの「プログラムから開く」でClipLogを選べます。</span></li>
+    </ul>
+    <p class="news-ios dim" id="newsIos" hidden>iPhone・iPadの場合：Safariの共有ボタン →「ホーム画面に追加」でインストールできます。</p>
+    <div class="news-actions">
+      <button class="btn ghost" id="newsFolder">フォルダを設定</button>
+      <button class="btn primary magnet" id="newsOk">はじめる</button>
+    </div>
+  </div>
+</div>
+
+<!-- Update available -->
+<div class="update-bar glass" id="updateBar" hidden>
+  <span class="pulse"></span>
+  <span>新しいバージョンのClipLogがあります</span>
+  <button class="btn ghost tiny" id="updateLater">あとで</button>
+  <button class="btn primary tiny" id="updateNow">更新する</button>
 </div>
 
 <div class="toast-host" id="toasts"></div>

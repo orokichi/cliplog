@@ -53,28 +53,32 @@ function toast(msg, icon = '✓') {
 const DB = (() => {
   let dbp;
   const open = () => dbp ||= new Promise((res, rej) => {
-    const r = indexedDB.open('cliplog', 1);
-    r.onupgradeneeded = () => {
-      const s = r.result.createObjectStore('logs', { keyPath: 'id' });
-      s.createIndex('createdAt', 'createdAt');
+    const r = indexedDB.open('cliplog', 2);
+    r.onupgradeneeded = (e) => {
+      const db = r.result;
+      if (!db.objectStoreNames.contains('logs')) db.createObjectStore('logs', { keyPath: 'id' }).createIndex('createdAt', 'createdAt');
+      if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
   });
-  const tx = async (mode, fn) => {
+  const tx = async (store, mode, fn) => {
     const db = await open();
     return new Promise((res, rej) => {
-      const t = db.transaction('logs', mode);
-      const out = fn(t.objectStore('logs'));
+      const t = db.transaction(store, mode);
+      const out = fn(t.objectStore(store));
       t.oncomplete = () => res(out?.result ?? out);
       t.onerror = () => rej(t.error);
     });
   };
   return {
-    put: (v) => tx('readwrite', s => s.put(v)),
-    del: (id) => tx('readwrite', s => s.delete(id)),
-    all: () => tx('readonly', s => s.getAll()),
-    get: (id) => tx('readonly', s => s.get(id)),
+    put: (v) => tx('logs', 'readwrite', s => s.put(v)),
+    del: (id) => tx('logs', 'readwrite', s => s.delete(id)),
+    all: () => tx('logs', 'readonly', s => s.getAll()),
+    get: (id) => tx('logs', 'readonly', s => s.get(id)),
+    kvGet: (k) => tx('kv', 'readonly', s => s.get(k)),
+    kvSet: (k, v) => tx('kv', 'readwrite', s => s.put(v, k)),
+    kvDel: (k) => tx('kv', 'readwrite', s => s.delete(k)),
   };
 })();
 
@@ -536,9 +540,15 @@ async function saveItem(it, quiet = false) {
     thumb: await makeThumb(c),
     w: c.width, h: c.height,
   };
+  const prev = it.savedId ? await DB.get(it.savedId) : null;
+  if (prev?.filePath) record.filePath = prev.filePath;
+  let wrote = false;
+  if (Folder.autoReady()) {
+    try { record.filePath = await Folder.writeLog(record); wrote = true; } catch (e) { console.warn(e); }
+  }
   await DB.put(record);
   it.savedId = record.id;
-  if (!quiet) toast('ログに保存しました');
+  if (!quiet) toast(wrote ? `保存してフォルダに書き出しました` : 'ログに保存しました');
   await loadLogs();
   renderTray();
 }
@@ -625,6 +635,10 @@ function bindLibrary() {
   $('#modalDelete').onclick = async () => {
     if (!modalId || !confirm('このログを削除しますか？')) return;
     const id = modalId;
+    const rec = await DB.get(id);
+    if (rec?.filePath && Folder.ready() && confirm('フォルダ内の画像ファイルも削除しますか？')) {
+      try { await Folder.remove(rec.filePath); } catch (e) { console.warn(e); }
+    }
     await DB.del(id);
     state.tray.forEach(t => { if (t.savedId === id) t.savedId = null; });
     closeModal(); await loadLogs(); renderTray(); toast('削除しました');
@@ -691,10 +705,11 @@ function bindInputs() {
   $('#clearTray').onclick = () => { if (state.tray.length && confirm('取り込み中の画像をすべて外しますか？（保存済みログは残ります）')) { state.tray.forEach(t => URL.revokeObjectURL(t.url)); state.tray = []; state.activeId = null; renderTray(); syncControls(); draw(); } };
   $('#saveAll').onclick = async () => {
     if (!state.tray.length) return;
+    if (Folder.needsPermission()) await Folder.reconnect();
     for (const it of state.tray) await saveItem(it, true);
     toast(`${state.tray.length}件をログに保存しました`);
   };
-  $('#saveBtn').onclick = () => active() && saveItem(active());
+  $('#saveBtn').onclick = async () => { if (!active()) return; if (Folder.needsPermission()) await Folder.reconnect(); saveItem(active()); };
   $('#downloadBtn').onclick = async () => { const b = await exportActive(); if (b) downloadBlob(b, safeName(active().title) + '.png'); };
   $('#copyBtn').onclick = async () => { const b = await exportActive(); if (b) copyBlob(b); };
 
@@ -702,7 +717,7 @@ function bindInputs() {
     const mod = e.metaKey || e.ctrlKey;
     const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName);
     if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); active() && saveItem(active()); }
-    if (e.key === 'Escape') closeModal();
+    if (e.key === 'Escape') { closeModal(); if ($('#news').classList.contains('open')) closeNews(); }
     if (!typing && e.key === '/') { e.preventDefault(); switchView('library'); $('#search').focus(); }
     if (!typing && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && state.tray.length > 1 && $('#view-editor').classList.contains('active')) {
       const i = state.tray.findIndex(t => t.id === state.activeId);
@@ -726,6 +741,268 @@ function magnets() {
   });
 }
 
+// ---------- folder sync (File System Access API) ----------
+const FS_SUPPORTED = 'showDirectoryPicker' in window;
+const IMG_RE = /\.(png|jpe?g|webp|gif|heic|heif)$/i;
+const Folder = (() => {
+  let handle = null, perm = 'none', files = [], thumbUrls = [], scanTimer = 0;
+  const o = { auto: true, organize: 'month', originals: false, ...JSON.parse(localStorage.getItem('cliplog:folder') || '{}') };
+  const saveOpts = () => localStorage.setItem('cliplog:folder', JSON.stringify(o));
+  const ready = () => FS_SUPPORTED && !!handle && perm === 'granted';
+  const autoReady = () => ready() && o.auto;
+
+  async function check(request = false) {
+    if (!handle) return (perm = 'none');
+    const q = { mode: 'readwrite' };
+    let p = await handle.queryPermission(q);
+    if (p !== 'granted' && request) p = await handle.requestPermission(q);
+    return (perm = p);
+  }
+  async function init() {
+    bindUI();
+    if (FS_SUPPORTED) {
+      handle = await DB.kvGet('dir').catch(() => null) || null;
+      if (handle) await check(false).catch(() => (perm = 'prompt'));
+    }
+    renderUI();
+    if (ready()) scan();
+  }
+  async function pick() {
+    try {
+      handle = await window.showDirectoryPicker({ id: 'cliplog', mode: 'readwrite', startIn: 'pictures' });
+      await DB.kvSet('dir', handle);
+      perm = 'granted';
+      renderUI(); toast(`「${handle.name}」と連携しました`); scan();
+    } catch (e) { if (e.name !== 'AbortError') toast('フォルダを開けませんでした', '!'); }
+  }
+  async function reconnect() {
+    try { if (await check(true) === 'granted') { toast('フォルダへのアクセスを許可しました'); scan(); } } catch { }
+    renderUI();
+  }
+  async function disconnect() {
+    if (!confirm('フォルダとの連携を解除しますか？（フォルダ内のファイルは消えません）')) return;
+    handle = null; perm = 'none'; files = [];
+    await DB.kvDel('dir'); renderUI(); renderGrid();
+  }
+  async function getDir(parts, create = true) {
+    let d = handle;
+    for (const p of parts) d = await d.getDirectoryHandle(p, { create });
+    return d;
+  }
+  function subdirFor(rec) {
+    if (o.organize === 'month') { const d = new Date(rec.createdAt); return [`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`]; }
+    if (o.organize === 'tag') return [safeName(rec.tags?.[0] || '未分類')];
+    return [];
+  }
+  async function uniqueName(dir, base, ext) {
+    let n = `${base}.${ext}`, i = 2;
+    for (;;) { try { await dir.getFileHandle(n); n = `${base} (${i++}).${ext}`; } catch { return n; } }
+  }
+  async function writeFile(dir, name, blob) {
+    const fh = await dir.getFileHandle(name, { create: true });
+    const w = await fh.createWritable(); await w.write(blob); await w.close();
+  }
+  async function writeLog(rec) {
+    const parts = subdirFor(rec), dir = await getDir(parts);
+    const d = new Date(rec.createdAt), p = (n) => String(n).padStart(2, '0');
+    const base = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}_${safeName(rec.title)}`;
+    let name;
+    if (rec.filePath) {
+      const old = rec.filePath.split('/'), oldName = old.pop();
+      if (old.join('/') === parts.join('/') && oldName.includes(safeName(rec.title))) name = oldName;
+      else { try { await remove(rec.filePath, true); } catch { } }
+    }
+    name ||= await uniqueName(dir, base, 'png');
+    await writeFile(dir, name, rec.render);
+    if (o.originals && rec.src) {
+      const od = await getDir([...parts, 'originals']);
+      const ext = ((rec.src.type || 'image/png').split('/')[1] || 'png').replace('jpeg', 'jpg');
+      await writeFile(od, name.replace(/\.png$/, '') + '.' + ext, rec.src);
+    }
+    scanSoon();
+    return [...parts, name].join('/');
+  }
+  async function remove(path, quiet) {
+    const parts = path.split('/'), name = parts.pop();
+    const dir = await getDir(parts, false);
+    await dir.removeEntry(name);
+    if (!quiet) scanSoon();
+  }
+  async function walk(dir, prefix, depth, out) {
+    for await (const [name, h] of dir.entries()) {
+      if (out.length >= 600) return;
+      if (h.kind === 'file' && IMG_RE.test(name)) out.push({ name, path: prefix + name, handle: h });
+      else if (h.kind === 'directory' && depth < 3 && !name.startsWith('.') && name !== 'originals') await walk(h, prefix + name + '/', depth + 1, out);
+    }
+  }
+  async function scan() {
+    if (!ready()) return;
+    const out = [];
+    try { await walk(handle, '', 0, out); } catch (e) { console.warn(e); await check(false).catch(() => {}); }
+    await Promise.all(out.map(async f => { try { f.file = await f.handle.getFile(); } catch { } }));
+    files = out.filter(f => f.file).sort((a, b) => b.file.lastModified - a.file.lastModified);
+    renderUI(); renderGrid();
+  }
+  function scanSoon() { clearTimeout(scanTimer); scanTimer = setTimeout(scan, 500); }
+  async function exportAll() {
+    if (!ready()) return;
+    const logs = await DB.all(); let n = 0;
+    for (const l of logs) { try { l.filePath = await writeLog(l); await DB.put(l); n++; } catch (e) { console.warn(e); } }
+    await loadLogs(); toast(`${n}件をフォルダに書き出しました`);
+  }
+  async function importList(list) {
+    if (!list.length) return;
+    switchView('editor');
+    await importFiles(list.map(f => f.file), 'フォルダから');
+  }
+
+  function renderUI() {
+    const sup = FS_SUPPORTED;
+    $('#folderUnsupported').hidden = sup;
+    $('#folderPick').hidden = !sup || !!handle;
+    $('#folderReconnect').hidden = !(handle && perm !== 'granted');
+    $('#folderOpts').hidden = !ready();
+    const icon = $('#folderIcon');
+    icon.classList.toggle('ok', ready()); icon.classList.toggle('warn', !!handle && perm !== 'granted');
+    if (!handle) {
+      $('#folderName').textContent = 'フォルダ未接続';
+      $('#folderState').textContent = sup ? 'パソコンのフォルダを選ぶと、保存したログを画像ファイルとして自動で整理します。' : '';
+    } else if (perm !== 'granted') {
+      $('#folderName').textContent = handle.name;
+      $('#folderState').textContent = 'ブラウザを再起動したため、もう一度アクセスの許可が必要です。';
+    } else {
+      $('#folderName').textContent = handle.name;
+      const orgLabel = { none: 'そのまま', month: '月別フォルダ', tag: 'タグ別フォルダ' }[o.organize];
+      $('#folderState').textContent = `${files.length}枚の画像 · ${o.auto ? `保存時に自動書き出し（${orgLabel}）` : '自動書き出しはオフ'}`;
+    }
+    $('#folderAuto').checked = o.auto;
+    $('#folderOriginals').checked = o.originals;
+    $$('#folderOrganize button').forEach(b => b.classList.toggle('on', b.dataset.org === o.organize));
+    const fc = $('#folderCount'); fc.hidden = !ready(); fc.textContent = files.length;
+  }
+  function renderGrid() {
+    thumbUrls.forEach(u => URL.revokeObjectURL(u)); thumbUrls = [];
+    const grid = $('#folderGrid'); grid.innerHTML = '';
+    if (!ready()) return;
+    files.slice(0, 300).forEach((f, i) => {
+      const el = document.createElement('article');
+      el.className = 'card glass';
+      el.style.animationDelay = Math.min(i * 30, 300) + 'ms';
+      el.innerHTML = `<div class="thumb"><img alt="" loading="lazy" /></div>
+        <div class="meta"><h3></h3><div class="sub"><span class="path"></span><span>${(f.file.size / 1024 / 1024).toFixed(1)}MB</span></div></div>`;
+      const img = el.querySelector('img');
+      if (!/heic|heif/i.test(f.name)) { const u = URL.createObjectURL(f.file); thumbUrls.push(u); img.src = u; }
+      el.querySelector('h3').textContent = f.name;
+      el.querySelector('.path').textContent = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '/';
+      el.title = 'クリックでエディタに取り込み';
+      el.onclick = () => importList([f]);
+      grid.appendChild(el);
+    });
+  }
+  function bindUI() {
+    $('#folderPick').onclick = pick;
+    $('#folderChange').onclick = pick;
+    $('#folderReconnect').onclick = reconnect;
+    $('#folderDisconnect').onclick = disconnect;
+    $('#folderRescan').onclick = async () => { await scan(); toast('フォルダを読み込み直しました'); };
+    $('#folderExport').onclick = exportAll;
+    $('#folderImportAll').onclick = () => importList(files.slice(0, 50));
+    $('#folderAuto').onchange = (e) => { o.auto = e.target.checked; saveOpts(); renderUI(); };
+    $('#folderOriginals').onchange = (e) => { o.originals = e.target.checked; saveOpts(); };
+    $$('#folderOrganize button').forEach(b => b.onclick = () => { o.organize = b.dataset.org; saveOpts(); renderUI(); });
+  }
+  return { init, ready, autoReady, writeLog, remove, scan, needsPermission: () => !!handle && perm !== 'granted', reconnect };
+})();
+
+function bindLibTabs() {
+  $$('#libTabs button').forEach(b => b.onclick = () => showLibTab(b.dataset.tab));
+}
+function showLibTab(tab) {
+  $$('#libTabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === tab));
+  $('#pane-logs').classList.toggle('hidden', tab !== 'logs');
+  $('#pane-folder').classList.toggle('hidden', tab !== 'folder');
+  if (tab === 'folder' && Folder.ready()) Folder.scan();
+}
+
+// ---------- PWA: install, updates, file launch ----------
+const APP_VERSION = '1.1.0';
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+function setupPWA() {
+  let deferred = null;
+  const btn = $('#installBtn');
+  if (!isStandalone() && isIOS()) btn.hidden = false;
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferred = e; btn.hidden = isStandalone(); });
+  window.addEventListener('appinstalled', () => { btn.hidden = true; deferred = null; toast('ClipLogをインストールしました'); });
+  btn.onclick = async () => {
+    if (!deferred) { openNews(); return; }
+    deferred.prompt();
+    await deferred.userChoice.catch(() => {});
+    deferred = null; btn.hidden = true;
+  };
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').then((reg) => {
+      const waiting = () => showUpdateBar(reg);
+      if (reg.waiting && navigator.serviceWorker.controller) waiting();
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        nw?.addEventListener('statechange', () => { if (nw.state === 'installed' && navigator.serviceWorker.controller) waiting(); });
+      });
+      setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+    }).catch(err => console.warn('SW', err));
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloaded || !sessionStorage.getItem('cliplog:updating')) return;
+      reloaded = true; sessionStorage.removeItem('cliplog:updating'); location.reload();
+    });
+  }
+
+  if ('launchQueue' in window) {
+    window.launchQueue.setConsumer(async (params) => {
+      if (!params.files?.length) return;
+      const fs = await Promise.all(params.files.map(h => h.getFile()));
+      switchView('editor'); importFiles(fs, 'アプリから');
+    });
+  }
+}
+
+function showUpdateBar(reg) {
+  const bar = $('#updateBar');
+  bar.hidden = false;
+  $('#updateLater').onclick = () => { bar.hidden = true; };
+  $('#updateNow').onclick = () => {
+    const unsaved = state.tray.some(t => !t.savedId);
+    if (unsaved && !confirm('保存していない画像は消えます。更新しますか？')) return;
+    sessionStorage.setItem('cliplog:updating', '1');
+    (reg.waiting || reg.installing)?.postMessage('SKIP_WAITING');
+    bar.hidden = true;
+  };
+}
+
+function openNews() {
+  $('#newsVersion').textContent = `Version ${APP_VERSION}`;
+  $('#newsIos').hidden = !(isIOS() && !isStandalone());
+  $('#news').classList.add('open'); $('#news').setAttribute('aria-hidden', 'false');
+  $('#newsDot').hidden = true;
+}
+function closeNews() {
+  $('#news').classList.remove('open'); $('#news').setAttribute('aria-hidden', 'true');
+  localStorage.setItem('cliplog:seenVersion', APP_VERSION);
+}
+function showWhatsNew() {
+  $('#newsBtn').onclick = openNews;
+  $('#newsOk').onclick = closeNews;
+  $('#newsFolder').onclick = () => { closeNews(); switchView('library'); showLibTab('folder'); };
+  $('#news').addEventListener('click', (e) => { if (e.target.id === 'news') closeNews(); });
+  if (localStorage.getItem('cliplog:seenVersion') !== APP_VERSION) {
+    $('#newsDot').hidden = false;
+    setTimeout(openNews, 700);
+  }
+}
+
 // ---------- boot ----------
 buildSwatches();
 bindControls();
@@ -733,6 +1010,10 @@ bindInputs();
 bindLibrary();
 magnets();
 syncControls();
+Folder.init();
+bindLibTabs();
+setupPWA();
+showWhatsNew();
 loadLogs().catch(err => { console.error(err); toast('ストレージを開けませんでした', '!'); });
 switchView(location.hash === '#library' ? 'library' : 'editor');
 requestAnimationFrame(movePill);
