@@ -67,7 +67,7 @@ const DB = (() => {
     return new Promise((res, rej) => {
       const t = db.transaction(store, mode);
       const out = fn(t.objectStore(store));
-      t.oncomplete = () => res(out?.result ?? out);
+      t.oncomplete = () => res(out instanceof IDBRequest ? out.result : out);
       t.onerror = () => rej(t.error);
     });
   };
@@ -761,7 +761,8 @@ const Folder = (() => {
   async function init() {
     bindUI();
     if (FS_SUPPORTED) {
-      handle = await DB.kvGet('dir').catch(() => null) || null;
+      const h = await DB.kvGet('dir').catch(() => null);
+      handle = h && typeof h.queryPermission === 'function' ? h : null;
       if (handle) await check(false).catch(() => (perm = 'prompt'));
     }
     renderUI();

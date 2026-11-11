@@ -1,5 +1,5 @@
 /* ClipLog service worker — bump VERSION on every release */
-const VERSION = 'cliplog-v1.1.0';
+const VERSION = 'cliplog-v1.1.1';
 const RUNTIME = 'cliplog-runtime';
 const SHELL = [
   './', './index.html', './style.css', './app.js', './manifest.webmanifest',
