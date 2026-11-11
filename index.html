@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>ClipLog — スクリーンショットを、スタイリッシュな記録に。</title>
 <meta name="description" content="ClipLogはスクリーンショットや画像をD&D・貼り付けで取り込み、フレームと装飾をカスタマイズして記録（ログ）として保存・管理できるWebアプリです。" />
-<meta name="theme-color" content="#000000" />
+<meta name="color-scheme" content="light dark" />
+<meta name="theme-color" content="#F3EDF7" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#211F26" media="(prefers-color-scheme: dark)" />
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
@@ -16,7 +18,7 @@
 <meta name="apple-mobile-web-app-title" content="ClipLog" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Flex:opsz,wdth,wght@8..144,100..125,400..900&family=Roboto+Mono:wght@400;500&family=Noto+Sans+JP:wght@400;500;700;800&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -35,6 +37,7 @@
     <button class="seg-btn" data-view="library" role="tab">ライブラリ <span class="badge" id="libCount">0</span></button>
   </nav>
   <div class="top-actions">
+    <button class="btn ghost icon-only" id="themeBtn" title="テーマ：ブラウザに合わせる"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/></svg></button>
     <button class="btn ghost icon-only" id="newsBtn" title="アップデート情報"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="dot" id="newsDot" hidden></span></button>
     <button class="btn ghost" id="installBtn" hidden title="アプリとしてインストール"><svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="3"/><path d="M12 7v7M9 11l3 3 3-3"/></svg><span>インストール</span></button>
     <label class="btn ghost magnet" title="画像を追加">
@@ -257,6 +260,8 @@
       </div>
     </div>
     <ul class="news-list">
+      <li><b>Material 3 Expressive デザイン</b><span>押すと形が変わるボタン、大きな角丸、弾むモーションに一新しました。</span></li>
+      <li><b>ブラウザのテーマに自動対応</b><span>ライト／ダークをブラウザ設定に合わせて切り替えます。右上のボタンで固定もできます。</span></li>
       <li><b>新しいアプリアイコン</b><span>黒地に白のシンプルなアイコンになりました。</span></li>
       <li><b>アプリとしてインストール</b><span>右上の「インストール」から、ホーム画面やDockに追加できます。オフラインでも起動します。</span></li>
       <li><b>フォルダ連携</b><span>ライブラリ →「フォルダ」でパソコンのフォルダを選ぶと、保存したログを月別・タグ別に自動で書き出し、フォルダ内の画像もすぐ取り込めます。</span></li>
@@ -279,6 +284,7 @@
 </div>
 
 <div class="toast-host" id="toasts"></div>
+<script>try{var t=localStorage.getItem("cliplog:theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
 <script src="app.js" type="module"></script>
 </body>
 </html>

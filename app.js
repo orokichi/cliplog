@@ -926,7 +926,7 @@ function showLibTab(tab) {
 }
 
 // ---------- PWA: install, updates, file launch ----------
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
@@ -1004,6 +1004,26 @@ function showWhatsNew() {
   }
 }
 
+// ---------- theme (follows browser, overridable) ----------
+function setupTheme() {
+  const modes = ['auto', 'light', 'dark'];
+  const label = { auto: 'ブラウザに合わせる', light: 'ライト', dark: 'ダーク' };
+  const mq = matchMedia('(prefers-color-scheme: dark)');
+  let mode = localStorage.getItem('cliplog:theme') || 'auto';
+  const apply = () => {
+    if (mode === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = mode;
+    const bar = getComputedStyle(document.documentElement).getPropertyValue('--sc').trim();
+    $$('meta[name=theme-color]').forEach(m => { if (mode === 'auto') m.removeAttribute('data-x'); m.content = mode === 'auto' ? (m.media.includes('dark') ? '#211F26' : '#F3EDF7') : bar; });
+    $('#themeBtn').title = 'テーマ：' + label[mode];
+  };
+  $('#themeBtn').onclick = () => {
+    mode = modes[(modes.indexOf(mode) + 1) % 3];
+    localStorage.setItem('cliplog:theme', mode); apply(); toast('テーマ：' + label[mode]);
+  };
+  mq.addEventListener?.('change', apply);
+  apply();
+}
+
 // ---------- boot ----------
 buildSwatches();
 bindControls();
@@ -1011,6 +1031,7 @@ bindInputs();
 bindLibrary();
 magnets();
 syncControls();
+setupTheme();
 Folder.init();
 bindLibTabs();
 setupPWA();
